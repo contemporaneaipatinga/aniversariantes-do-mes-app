@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aniversariantes do Mês</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f3f4f6;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            padding: 1rem;
+        }
+        .card {
+            background-color: #ffffff;
+            border-radius: 1.5rem;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+            padding: 2.5rem;
+            max-width: 500px;
+            width: 100%;
+        }
+        .input-group label {
+            font-weight: 600;
+            color: #4b5563;
+        }
+        .input-group input, .input-group button, .input-group select {
+            border-radius: 0.75rem;
+        }
+        .date-item {
+            background-color: #f9fafb;
+            border: 1px solid #e5e7eb;
+            border-radius: 0.75rem;
+        }
+        .delete-btn {
+            transition: transform 0.2s ease-in-out;
+        }
+        .delete-btn:hover {
+            transform: scale(1.1);
+        }
+        .reminder-box {
+            background-color: #d1fae5;
+            border: 1px solid #34d399;
+            color: #065f46;
+        }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1 class="text-3xl font-bold text-center text-gray-800 mb-6">Aniversariantes do Mês</h1>
+        
+        <!-- Caixa de lembrete, oculta por padrão -->
+        <div id="reminderBox" class="reminder-box p-4 rounded-xl mb-6 hidden">
+            <h3 class="font-bold text-lg mb-2">Lembretes de Hoje!</h3>
+            <ul id="reminderList" class="list-disc ml-5"></ul>
+        </div>
+
+        <form id="dateForm" class="space-y-4">
+            <div class="flex flex-col sm:flex-row gap-4">
+                <div class="w-full input-group">
+                    <label for="dateInput" class="block text-sm mb-1">Data</label>
+                    <input type="date" id="dateInput" class="w-full px-4 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-indigo-500" required>
+                </div>
+                <div class="w-full input-group">
+                    <label for="descriptionInput" class="block text-sm mb-1">Nome</label>
+                    <input type="text" id="descriptionInput" placeholder="Ex: Débora" class="w-full px-4 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-indigo-500" required>
+                </div>
+            </div>
+            <div class="input-group">
+                <label for="personTypeInput" class="block text-sm mb-1">Tipo de pessoa</label>
+                <select id="personTypeInput" class="w-full px-4 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 rounded-lg">
+                    <option value="Cliente">Cliente</option>
+                    <option value="Arquiteto">Arquiteto</option>
+                </select>
+            </div>
+            <button type="submit" class="w-full bg-indigo-600 text-white font-semibold py-2 px-4 rounded-xl hover:bg-indigo-700 transition duration-300 ease-in-out">
+                Adicionar Aniversariante
+            </button>
+        </form>
+
+        <div class="mt-8">
+            <h2 class="text-xl font-semibold text-gray-800 mb-4">Aniversariantes</h2>
+            <ul id="datesList" class="space-y-3">
+                <!-- Datas serão exibidas aqui -->
+            </ul>
+        </div>
+        
+        <div id="loading" class="text-center text-gray-500 mt-4 hidden">Carregando...</div>
+        <div id="auth-info" class="text-center text-sm text-gray-400 mt-6"></div>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, addDoc, onSnapshot, query, deleteDoc, doc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        
+        setLogLevel('debug');
+
+        const dateForm = document.getElementById('dateForm');
+        const dateInput = document.getElementById('dateInput');
+        const descriptionInput = document.getElementById('descriptionInput');
+        const personTypeInput = document.getElementById('personTypeInput');
+        const datesList = document.getElementById('datesList');
+        const loadingIndicator = document.getElementById('loading');
+        const authInfo = document.getElementById('auth-info');
+        const reminderBox = document.getElementById('reminderBox');
+        const reminderList = document.getElementById('reminderList');
+
+        let db, auth, userId;
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+
+        // Inicializa o Firebase
+        const app = initializeApp(firebaseConfig);
+        auth = getAuth(app);
+        db = getFirestore(app);
+
+        // Lida com a autenticação e carregamento de dados
+        onAuthStateChanged(auth, async (user) => {
+            if (user) {
+                userId = user.uid;
+                authInfo.textContent = `Sessão iniciada. ID do Usuário: ${userId}`;
+                setupRealtimeListener();
+            } else {
+                try {
+                    if (typeof __initial_auth_token !== 'undefined') {
+                        await signInWithCustomToken(auth, __initial_auth_token);
+                    } else {
+                        await signInAnonymously(auth);
+                    }
+                } catch (error) {
+                    console.error("Erro na autenticação:", error);
+                    authInfo.textContent = "Erro na autenticação.";
+                }
+            }
+        });
+
+        // Configura o ouvinte em tempo real para o banco de dados
+        const setupRealtimeListener = () => {
+            const path = `/artifacts/${appId}/users/${userId}/datas_comemorativas`;
+            const datesCollection = collection(db, path);
+            const q = query(datesCollection);
+            
+            loadingIndicator.classList.remove('hidden');
+
+            onSnapshot(q, (querySnapshot) => {
+                loadingIndicator.classList.add('hidden');
+                datesList.innerHTML = ''; // Limpa a lista
+                let dates = [];
+                querySnapshot.forEach((doc) => {
+                    dates.push({ id: doc.id, ...doc.data() });
+                });
+                
+                // Classifica as datas em ordem crescente
+                dates.sort((a, b) => new Date(a.date) - new Date(b.date));
+                
+                // Verifica e exibe lembretes para hoje
+                checkReminders(dates);
+
+                if (dates.length === 0) {
+                    datesList.innerHTML = `<li class="text-center text-gray-500">Nenhuma data adicionada ainda.</li>`;
+                } else {
+                    dates.forEach(item => {
+                        const li = document.createElement('li');
+                        li.className = 'date-item flex items-center justify-between p-4';
+                        li.innerHTML = `
+                            <div>
+                                <span class="block text-gray-700 font-semibold">${item.date} - ${item.description}</span>
+                                <span class="block text-gray-500 text-sm">Tipo: ${item.type}</span>
+                            </div>
+                            <button class="delete-btn text-red-500 p-2 rounded-full hover:bg-red-100" data-id="${item.id}">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                  <path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm6 0a1 1 0 112 0v6a1 1 0 11-2 0V8z" clip-rule="evenodd" />
+                                </svg>
+                            </button>
+                        `;
+                        datesList.appendChild(li);
+                    });
+                }
+            });
+        };
+
+        // Função para verificar se há lembretes para a data atual
+        const checkReminders = (dates) => {
+            const today = new Date().toISOString().split('T')[0];
+            const todayEvents = dates.filter(item => item.date === today);
+
+            reminderList.innerHTML = ''; // Limpa a lista de lembretes
+
+            if (todayEvents.length > 0) {
+                reminderBox.classList.remove('hidden');
+                todayEvents.forEach(event => {
+                    const li = document.createElement('li');
+                    li.textContent = `${event.description} (${event.type})`;
+                    reminderList.appendChild(li);
+                });
+            } else {
+                reminderBox.classList.add('hidden');
+            }
+        };
+
+        // Adiciona um novo lembrete
+        dateForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const newDate = dateInput.value;
+            const newDescription = descriptionInput.value;
+            const newPersonType = personTypeInput.value;
+
+            if (!newDate || !newDescription || !newPersonType) {
+                console.error("Por favor, preencha todos os campos.");
+                return;
+            }
+
+            try {
+                if (!userId) {
+                    console.error("ID de usuário não disponível. Tente novamente.");
+                    return;
+                }
+                const path = `/artifacts/${appId}/users/${userId}/datas_comemorativas`;
+                await addDoc(collection(db, path), {
+                    date: newDate,
+                    description: newDescription,
+                    type: newPersonType,
+                    timestamp: new Date().getTime()
+                });
+
+                dateInput.value = '';
+                descriptionInput.value = '';
+                dateInput.focus();
+            } catch (e) {
+                console.error("Erro ao adicionar documento: ", e);
+            }
+        });
+
+        // Deleta um lembrete
+        datesList.addEventListener('click', async (e) => {
+            if (e.target.closest('.delete-btn')) {
+                const docId = e.target.closest('.delete-btn').dataset.id;
+                try {
+                    const path = `/artifacts/${appId}/users/${userId}/datas_comemorativas`;
+                    await deleteDoc(doc(db, path, docId));
+                } catch (e) {
+                    console.error("Erro ao remover documento: ", e);
+                }
+            }
+        });
+
+    </script>
+</body>
+</html>
